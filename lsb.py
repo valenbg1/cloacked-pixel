@@ -13,9 +13,9 @@ def decompose(data):
 
     # Pack file len in 4 bytes
     fSize = len(data)
-    bytes = [ord(b) for b in struct.pack("i", fSize)]
+    bytes = [b for b in struct.pack("i", fSize)]
 
-    bytes += [ord(b) for b in data]
+    bytes += [b for b in data]
 
     for b in bytes:
         for i in range(7, -1, -1):
@@ -26,19 +26,19 @@ def decompose(data):
 
 # Assemble an array of bits into a binary file
 def assemble(v):
-    bytes = ""
+    byteArray = bytearray()
 
     length = len(v)
-    for idx in range(0, len(v) / 8):
+    for idx in range(0, len(v) // 8):
         byte = 0
         for i in range(0, 8):
             if idx * 8 + i < length:
                 byte = (byte << 1) + v[idx * 8 + i]
-        bytes = bytes + chr(byte)
+        byteArray.append(byte)
 
-    payload_size = struct.unpack("i", bytes[:4])[0]
+    payload_size = struct.unpack("i", byteArray[:4])[0]
 
-    return bytes[4: payload_size + 4]
+    return byteArray[4: payload_size + 4]
 
 
 # Set the i-th bit of v to x
