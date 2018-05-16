@@ -2,15 +2,14 @@ import hashlib
 from Crypto import Random
 from Crypto.Cipher import AES
 
-'''
+"""
 Thanks to
 http://stackoverflow.com/questions/12524994/encrypt-decrypt-using-pycrypto-aes-256
-'''
+"""
 class AESCipher:
-
     def __init__(self, key): 
-        self.bs = 32	# Block size
-        self.key = hashlib.sha256(key.encode()).digest()	# 32 bit digest
+        self.bs = 32  # Block size
+        self.key = hashlib.sha256(key.encode()).digest()  # 32 bit digest
 
     def encrypt(self, raw):
         raw = self._pad(raw)
