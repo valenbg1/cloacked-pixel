@@ -1,11 +1,17 @@
+#!/usr/bin/env python3
+
 import sys
 import struct
+from itertools import zip_longest
+from os import path
+from pathlib import Path
+import random
+
 import numpy
 import matplotlib.pyplot as plt
-
 from PIL import Image
-
 from crypt import AESCipher
+
 
 # Decompose a binary file into an array of bits
 def decompose(data):
@@ -48,6 +54,26 @@ def set_bit(n, i, x):
     if x:
         n |= mask
     return n
+
+
+def grouper(iterable, n, fillvalue=None):
+    "Collect data into fixed-length chunks or blocks"
+    # grouper('ABCDEFG', 3, 'x') --> ABC DEF Gxx"
+    args = [iter(iterable)] * n
+    return zip_longest(*args, fillvalue=fillvalue)
+
+
+# Efficiently pops a random item from a list, altering list order.
+def rndPop(lst):
+    if lst:
+        rndPos = random.randrange(len(lst))
+        rndElem = lst[rndPos]
+        lst[rndPos] = lst[-1]
+        del lst[-1]
+
+        return rndElem
+    else:
+        return None
 
 
 # Embed payload file into LSB bits of an image
@@ -101,6 +127,63 @@ def embed(imgFile, payload, password):
     steg_img.save(imgFile + "-stego.png", "PNG")
 
     print("[+] %s embedded successfully!" % payload)
+
+
+def embedRandom(imgFilePath, payloadFilePath, passwd, bitSelectionLimit):
+    with Image.open(imgFilePath) as img:
+        (width, height) = img.size
+        imgData = img.convert("RGBA").getdata()
+
+    print("[*] Input image size: {}x{} pixels.".format(width, height))
+
+    maxPayloadSize = width * height * 3 / 8 / 1024
+    print("[*] Usable payload size: {:.4f}KB.".format(maxPayloadSize))
+
+    with open(payloadFilePath, "rb") as payloadFile:
+        payloadData = payloadFile.read()
+
+    print("[*] Payload size: {:.4f}KB ".format(len(payloadData) / 1024))
+
+    # Encrypt payload data.
+    payloadDataEnc = AESCipher(passwd).encrypt \
+        (payloadData)
+
+    # Payload data encrypted to list of bits.
+    payloadDataEncBitsGrouped = list(grouper(decompose(payloadDataEnc), 3, 0))
+
+    payloadSize = len(payloadDataEncBitsGrouped) * 3 / 8 / 1024
+    print("[*] Encrypted payload size: {:.4f}KB.".format(payloadSize))
+
+    if payloadSize > maxPayloadSize - 4:
+        print("[!] Cannot embed. Payload file too large.")
+        return
+
+    # Create output stego-image.
+    stegoImg = Image.new("RGBA", (width, height))
+    stegoImgData = stegoImg.getdata()
+
+    # Copy the original img bytes.
+    for h in range(height):
+        for w in range(width):
+            stegoImgData.putpixel((w, h), imgData.getpixel((w, h)))
+
+    freePixels = [(w, h) for h in range(height) for w in range(width)]
+    random.seed(passwd, 2)
+
+    for bitTriple in payloadDataEncBitsGrouped:
+        pixel = rndPop(freePixels)
+        (r, g, b, a) = stegoImgData.getpixel(pixel)
+
+        r = set_bit(r, random.randrange(bitSelectionLimit+1), bitTriple[0])
+        g = set_bit(g, random.randrange(bitSelectionLimit+1), bitTriple[1])
+        b = set_bit(b, random.randrange(bitSelectionLimit+1), bitTriple[2])
+
+        stegoImgData.putpixel(pixel, (r, g, b, a))
+
+    stegoImgFilePath = Path(imgFilePath)
+    stegoImg.save(path.join(stegoImgFilePath.parent, stegoImgFilePath.stem + "-stego.png"), "PNG")
+
+    print("[*] Payload file embedded successfully!")
 
 
 # Extract data embedded into LSB of the input file
@@ -186,7 +269,9 @@ def usage(progName):
     print("LSB steganograhy. Hide files within least significant bits of images.\n")
     print("Usage:")
     print("  %s hide <img_file> <payload_file> <password>" % progName)
+    print("  %s hideRandom <imgFile> <payloadFile> <password> <bitSelectionLimit>" % progName)
     print("  %s extract <stego_file> <out_file> <password>" % progName)
+    print("  %s extractRandom <stegoFile> <outputFile> <password> <bitSelectionLimit>" % progName)
     print("  %s analyse <stego_file>" % progName)
     sys.exit()
 
@@ -197,6 +282,8 @@ if __name__ == "__main__":
 
     if sys.argv[1] == "hide":
         embed(sys.argv[2], sys.argv[3], sys.argv[4])
+    elif sys.argv[1] == "hideRandom":
+        embedRandom(sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5]))
     elif sys.argv[1] == "extract":
         extract(sys.argv[2], sys.argv[3], sys.argv[4])
     elif sys.argv[1] == "analyse":
