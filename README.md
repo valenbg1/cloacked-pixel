@@ -3,6 +3,46 @@
 
 cloacked-pixel
 ==========
+Added functionality
+-------------------
+
+The program is now also able to embed the payload file into random bytes of the image.
+New functionality:
+
+    lsb.py hideRandom <imgFile> <payloadFile> <password> <bitSelectionLimit>
+    lsb.py extractRandom <stegoFile> <outputFile> <password> <bitSelectionLimit>
+    
+Instead of saving the payload bits linearly into the image, a PRNG is initialized with the
+password passed as the seed, and it is used to select the image bytes that should be used to hide the
+payload. The specific bit of the byte that will be used to hide information is also randomly
+selected from the least significant bit (index 0) to bitSelectionLimit (included).
+
+Usage example:
+
+    lsb.py hideRandom images/orig.png images/test.txt pass 2
+    
+This hides images/test.txt in images/orig.png using 'pass' as the encryption password
+to encrypt images/test.txt (and as the PRNG seed), and can use randomly the bit
+number 0, 1 o 2 of each byte of the image to store info.
+
+How to use:
+
+    $ python lsb.py 
+    LSB steganograhy. Hide files within least significant bits of images.
+
+    Usage:
+    lsb.py  hide <img_file> <payload_file> <password>
+    lsb.py hideRandom <imgFile> <payloadFile> <password> <bitSelectionLimit>
+    lsb.py extract <stego_file> <out_file> <password>
+    lsb.py extractRandom <stegoFile> <outputFile> <password> <bitSelectionLimit>
+    lsb.py analyse <stego_file>
+
+    <bitSelectionLimit>: the program will randomly use one bit of each byte to store
+        the payload info, but only up to the <bitSelectionLimit> bit.
+        Possible values are: 0, 1, ... , 7.
+
+Original README.md
+------------------
 
 Platform independent Python tool to implement LSB image steganography and a basic detection technique. Features:
 

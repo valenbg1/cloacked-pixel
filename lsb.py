@@ -6,6 +6,8 @@ from itertools import zip_longest
 from os import path
 from pathlib import Path
 import random
+import math
+import hashlib
 
 import numpy
 import matplotlib.pyplot as plt
@@ -32,15 +34,7 @@ def decompose(data):
 
 # Assemble an array of bits into a binary file
 def assemble(v):
-    byteArray = bytearray()
-
-    length = len(v)
-    for idx in range(0, len(v) // 8):
-        byte = 0
-        for i in range(0, 8):
-            if idx * 8 + i < length:
-                byte = (byte << 1) + v[idx * 8 + i]
-        byteArray.append(byte)
+    byteArray = bitLstToByteArray(v)
 
     payload_size = struct.unpack("i", byteArray[:4])[0]
 
@@ -54,6 +48,26 @@ def set_bit(n, i, x):
     if x:
         n |= mask
     return n
+
+
+# Returns the i-th bit of n.
+def getBit(i, n):
+    return int((n & (1 << i)) > 0)
+
+
+def bitLstToByteArray(bitLst):
+    byteArray = bytearray()
+
+    for i in range(len(bitLst) // 8):
+        byte = 0
+
+        for j in range(8):
+            if i*8 + j < len(bitLst):
+                byte = (byte << 1) + bitLst[i*8 + j]
+
+        byteArray.append(byte)
+
+    return byteArray
 
 
 def grouper(iterable, n, fillvalue=None):
@@ -145,14 +159,13 @@ def embedRandom(imgFilePath, payloadFilePath, passwd, bitSelectionLimit):
     print("[*] Payload size: {:.4f}KB ".format(len(payloadData) / 1024))
 
     # Encrypt payload data.
-    payloadDataEnc = AESCipher(passwd).encrypt \
-        (payloadData)
+    payloadDataEnc = AESCipher(passwd).encrypt(payloadData)
+    print("[*] Encrypted payload size: {:.4f}KB.".format(len(payloadDataEnc)/1024))
 
-    # Payload data encrypted to list of bits.
-    payloadDataEncBitsGrouped = list(grouper(decompose(payloadDataEnc), 3, 0))
+    # Payload data encrypted to list of bit triples.
+    payloadDataEncBitTriples = list(grouper(decompose(payloadDataEnc), 3, 0))
 
-    payloadSize = len(payloadDataEncBitsGrouped) * 3 / 8 / 1024
-    print("[*] Encrypted payload size: {:.4f}KB.".format(payloadSize))
+    payloadSize = len(payloadDataEncBitTriples) * 3 / 8 / 1024
 
     if payloadSize > maxPayloadSize - 4:
         print("[!] Cannot embed. Payload file too large.")
@@ -168,11 +181,11 @@ def embedRandom(imgFilePath, payloadFilePath, passwd, bitSelectionLimit):
             stegoImgData.putpixel((w, h), imgData.getpixel((w, h)))
 
     freePixels = [(w, h) for h in range(height) for w in range(width)]
-    random.seed(passwd, 2)
+    random.seed(hashlib.sha256(passwd.encode()).digest(), 2)
 
-    for bitTriple in payloadDataEncBitsGrouped:
+    for bitTriple in payloadDataEncBitTriples:
         pixel = rndPop(freePixels)
-        (r, g, b, a) = stegoImgData.getpixel(pixel)
+        r, g, b, a = stegoImgData.getpixel(pixel)
 
         r = set_bit(r, random.randrange(bitSelectionLimit+1), bitTriple[0])
         g = set_bit(g, random.randrange(bitSelectionLimit+1), bitTriple[1])
@@ -215,6 +228,49 @@ def extract(in_file, out_file, password):
     out_f.close()
 
     print("[+] Written extracted data to %s." % out_file)
+
+
+def getHiddenBits(stegoImgData, pixel, bitSelectionLimit):
+    r, g, b, _ = stegoImgData.getpixel(pixel)
+
+    return (getBit(random.randrange(bitSelectionLimit+1), r),
+            getBit(random.randrange(bitSelectionLimit+1), g),
+            getBit(random.randrange(bitSelectionLimit+1), b))
+
+
+def extractRandom(stegoImgFilePath, outputFilePath, passwd, bitSelectionLimit):
+    # Process stego img file.
+    with Image.open(stegoImgFilePath) as stegoImg:
+        (width, height) = stegoImg.size
+        stegoImgData = stegoImg.convert("RGBA").getdata()
+
+    print("[*] Stego image size: {}x{} pixels.".format(width, height))
+
+    notCheckedPixels = [(w, h) for h in range(height) for w in range(width)]
+    payloadDataEncBits = []
+    random.seed(hashlib.sha256(passwd.encode()).digest(), 2)
+
+    # Retrieve payload size.
+    for _ in range(11):
+        payloadDataEncBits.extend(getHiddenBits(stegoImgData, rndPop(notCheckedPixels), bitSelectionLimit))
+
+    payloadSize = struct.unpack("i", bitLstToByteArray(payloadDataEncBits[:32]))[0]
+    print("[*] Encrypted payload size: {:.4f}KB.".format(payloadSize/1024))
+
+    for _ in range(int(math.ceil((payloadSize*8-1) / 3))):
+        payloadDataEncBits.extend(getHiddenBits(stegoImgData, rndPop(notCheckedPixels), bitSelectionLimit))
+
+    payloadDataEncBytes = assemble(payloadDataEncBits)
+
+    # Decrypt payload data.
+    payloadDataBytes = AESCipher(passwd).decrypt(payloadDataEncBytes)
+    print("[*] Payload size: {:.4f}KB ".format(len(payloadDataBytes) / 1024))
+
+    # Write decrypted data.
+    with open(outputFilePath, "wb") as outputFile:
+        outputFile.write(payloadDataBytes)
+
+    print("[*] Data extracted to {}.".format(outputFilePath))
 
 
 # Statistical analysis of an image to detect LSB steganography
@@ -265,20 +321,22 @@ def analyse(in_file):
     plt.show()
 
 
-def usage(progName):
+def printUsage(progName):
     print("LSB steganograhy. Hide files within least significant bits of images.\n")
     print("Usage:")
-    print("  %s hide <img_file> <payload_file> <password>" % progName)
-    print("  %s hideRandom <imgFile> <payloadFile> <password> <bitSelectionLimit>" % progName)
-    print("  %s extract <stego_file> <out_file> <password>" % progName)
-    print("  %s extractRandom <stegoFile> <outputFile> <password> <bitSelectionLimit>" % progName)
-    print("  %s analyse <stego_file>" % progName)
-    sys.exit()
+    print("  {} hide <img_file> <payload_file> <password>".format(progName))
+    print("  {} hideRandom <imgFile> <payloadFile> <password> <bitSelectionLimit>".format(progName))
+    print("  {} extract <stego_file> <out_file> <password>".format(progName))
+    print("  {} extractRandom <stegoFile> <outputFile> <password> <bitSelectionLimit>".format(progName))
+    print("  {} analyse <stego_file>\n".format(progName))
+    print("  <bitSelectionLimit>: the program will randomly use one bit of each byte to store the payload info,"
+          " but only up to the <bitSelectionLimit> bit. Possible values are: 0, 1, ... , 7.")
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        usage(sys.argv[0])
+        printUsage(sys.argv[0])
+        sys.exit()
 
     if sys.argv[1] == "hide":
         embed(sys.argv[2], sys.argv[3], sys.argv[4])
@@ -286,7 +344,9 @@ if __name__ == "__main__":
         embedRandom(sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5]))
     elif sys.argv[1] == "extract":
         extract(sys.argv[2], sys.argv[3], sys.argv[4])
+    elif sys.argv[1] == "extractRandom":
+        extractRandom(sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5]))
     elif sys.argv[1] == "analyse":
         analyse(sys.argv[2])
     else:
-        print("[-] Invalid operation specified")
+        print("[!] Invalid operation specified.")
